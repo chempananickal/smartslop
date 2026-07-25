@@ -78,6 +78,108 @@ function multisetSignature(values) {
   return [...values].sort().join("\u0000");
 }
 
+function splitTopLevelDot(smartsChunk) {
+  const parts = [];
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < smartsChunk.length; i += 1) {
+    const c = smartsChunk[i];
+    if (c === "(" || c === "[") depth += 1;
+    else if (c === ")" || c === "]") depth -= 1;
+    else if (c === "." && depth === 0) {
+      parts.push(smartsChunk.slice(start, i));
+      start = i + 1;
+    }
+  }
+  parts.push(smartsChunk.slice(start));
+  return parts.map((s) => s.trim()).filter(Boolean);
+}
+
+function splitReactionSmarts(smarts) {
+  const chunks = smarts.split(">");
+  if (chunks.length < 2) return { reactants: [], products: [] };
+  const reactants = splitTopLevelDot(chunks[0] ?? "");
+  const products = splitTopLevelDot(chunks[chunks.length - 1] ?? "");
+  return { reactants, products };
+}
+
+const HIGHLIGHT_COLOR = [1.0, 0.55, 0.24];
+
+function parseMatchJson(raw) {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed || !Array.isArray(parsed.atoms) || !parsed.atoms.length) return null;
+    return {
+      atoms: parsed.atoms,
+      bonds: Array.isArray(parsed.bonds) ? parsed.bonds : []
+    };
+  } catch {
+    return null;
+  }
+}
+
+function renderHighlightedSvg(mol, match) {
+  const atomColors = Object.fromEntries(match.atoms.map((idx) => [idx, HIGHLIGHT_COLOR]));
+  const bondColors = Object.fromEntries(match.bonds.map((idx) => [idx, HIGHLIGHT_COLOR]));
+  const details = {
+    atoms: match.atoms,
+    bonds: match.bonds,
+    highlightAtomColors: atomColors,
+    highlightBondColors: bondColors,
+    width: 320,
+    height: 220,
+    bondLineWidth: 2.5
+  };
+  return mol.get_svg_with_highlights(JSON.stringify(details));
+}
+
+function highlightReactant(RDKitModule, sourceSmiles, qmol) {
+  const mol = RDKitModule.get_mol(sourceSmiles);
+  if (!mol) return null;
+  try {
+    const match = parseMatchJson(mol.get_substruct_match(qmol));
+    if (!match) return null;
+    return { svg: renderHighlightedSvg(mol, match), match };
+  } finally {
+    mol.delete?.();
+  }
+}
+
+function assignReactantHighlights(RDKitModule, reactants, smartsFragments) {
+  const qmols = smartsFragments.map((smarts) => {
+    try {
+      const qmol = RDKitModule.get_qmol(smarts);
+      return qmol ? { smarts, qmol } : null;
+    } catch {
+      return null;
+    }
+  });
+  const results = reactants.map(() => null);
+  const claimed = new Set();
+  try {
+    for (let i = 0; i < reactants.length; i += 1) {
+      for (let j = 0; j < qmols.length; j += 1) {
+        if (!qmols[j] || claimed.has(j)) continue;
+        const highlight = highlightReactant(RDKitModule, reactants[i].sourceSmiles, qmols[j].qmol);
+        if (highlight) {
+          results[i] = {
+            smartsFragment: qmols[j].smarts,
+            highlightedSvg: highlight.svg,
+            matchedAtoms: highlight.match.atoms,
+            matchedBonds: highlight.match.bonds
+          };
+          claimed.add(j);
+          break;
+        }
+      }
+    }
+  } finally {
+    for (const entry of qmols) entry?.qmol?.delete?.();
+  }
+  return results;
+}
+
 function buildProductLabel(records) {
   return records.length
     ? records.map((r) => r.canonicalSmiles).sort().join(" + ")
@@ -312,6 +414,17 @@ export function analyzeReactionRequest(RDKitModule, request) {
     reaction.delete?.();
   }
 
+  const { reactants: reactantSmartsFragments } = splitReactionSmarts(reactionSmarts);
+  const reactantHighlights = assignReactantHighlights(RDKitModule, reactants, reactantSmartsFragments);
+  reactants.forEach((record, index) => {
+    const highlight = reactantHighlights[index];
+    if (!highlight) return;
+    record.highlightedSvg = highlight.highlightedSvg;
+    record.matchedAtoms = highlight.matchedAtoms;
+    record.matchedBonds = highlight.matchedBonds;
+    record.smartsFragment = highlight.smartsFragment;
+  });
+
   const targetLabel = buildProductLabel(targets);
   const enrichedOutcomes = outcomes.map((outcome) => ({
     ...outcome,
@@ -345,3 +458,66 @@ export function analyzeReactionRequest(RDKitModule, request) {
   };
 }
 
+function safeSummarizeInputMolecule(RDKitModule, molecule, role, index) {
+  const label = molecule?.label ?? `${role} ${index + 1}`;
+  const value = molecule?.value ?? "";
+  if (!value.trim()) {
+    return {
+      index, role, label, sourceSmiles: value,
+      canonicalSmiles: null, svg: null, atomCounts: {}, formula: "?",
+      error: "empty SMILES"
+    };
+  }
+  try {
+    return summarizeInputMolecule(RDKitModule, molecule, role, index);
+  } catch (error) {
+    return {
+      index, role, label, sourceSmiles: value,
+      canonicalSmiles: null, svg: null, atomCounts: {}, formula: "?",
+      error: String(error?.message ?? error)
+    };
+  }
+}
+
+export function previewReactionRequest(RDKitModule, request) {
+  const reactants = (request?.reactants ?? []).map((molecule, index) =>
+    safeSummarizeInputMolecule(RDKitModule, molecule, "reactant", index)
+  );
+  const targets = (request?.products ?? []).map((molecule, index) =>
+    safeSummarizeInputMolecule(RDKitModule, molecule, "product", index)
+  );
+  const reactionSmarts = (request?.reaction_smarts ?? "").trim();
+
+  let smartsError = null;
+  const validReactants = reactants.filter((r) => !r.error);
+  if (reactionSmarts) {
+    const { reactants: fragments } = splitReactionSmarts(reactionSmarts);
+    if (fragments.length) {
+      try {
+        const highlights = assignReactantHighlights(RDKitModule, validReactants, fragments);
+        validReactants.forEach((record, idx) => {
+          const highlight = highlights[idx];
+          if (!highlight) return;
+          record.highlightedSvg = highlight.highlightedSvg;
+          record.matchedAtoms = highlight.matchedAtoms;
+          record.matchedBonds = highlight.matchedBonds;
+          record.smartsFragment = highlight.smartsFragment;
+        });
+      } catch (error) {
+        smartsError = String(error?.message ?? error);
+      }
+    }
+  }
+
+  const cleanReactants = reactants.filter((r) => !r.error);
+  const cleanTargets = targets.filter((t) => !t.error);
+  return {
+    reactants,
+    targets,
+    reactionSmarts,
+    reactantFormula: cleanReactants.length ? formatFormula(aggregateCounts(cleanReactants)) : "-",
+    targetFormula: cleanTargets.length ? formatFormula(aggregateCounts(cleanTargets)) : "-",
+    warnings: cleanReactants.length && cleanTargets.length ? balanceWarnings(cleanReactants, cleanTargets) : [],
+    smartsError
+  };
+}

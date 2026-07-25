@@ -1,4 +1,4 @@
-import { analyzeReactionRequest } from "../js/reaction-analysis.mjs";
+import { analyzeReactionRequest, previewReactionRequest } from "../js/reaction-analysis.mjs";
 
 let rdkitScriptPromise;
 let rdkitModulePromise;
@@ -41,4 +41,9 @@ export async function loadBrowserRdkit() {
 export async function rdkitTemplateAdapterBrowser(request) {
   const RDKitModule = await loadBrowserRdkit();
   return analyzeReactionRequest(RDKitModule, request);
+}
+
+export async function previewReactionInBrowser(request) {
+  const RDKitModule = await loadBrowserRdkit();
+  return previewReactionRequest(RDKitModule, request);
 }

@@ -4,7 +4,8 @@ import init, {
 } from "../pkg-web/smartslop_wasm.js";
 import {
   loadBrowserRdkit,
-  rdkitTemplateAdapterBrowser
+  rdkitTemplateAdapterBrowser,
+  previewReactionInBrowser
 } from "./rdkit-browser.mjs";
 
 const el = (id) => document.getElementById(id);
@@ -118,13 +119,74 @@ function renderGallery(target, records, emptyLabel) {
   for (const record of records) target.append(moleculeCard(record));
 }
 
-function renderDiagram(svg) {
+function renderDiagram(result) {
   reactionDiagram.replaceChildren();
-  if (svg) {
-    reactionDiagram.innerHTML = svg;
-  } else {
-    reactionDiagram.append(message("RDKit did not return a reaction SVG.", "warning"));
+  const reactants = result.reactants ?? [];
+  const targets = result.targets ?? [];
+  const anyHighlight = reactants.some((r) => r.highlightedSvg);
+
+  if (!reactants.length && !targets.length) {
+    if (result.reactionSvg) {
+      reactionDiagram.innerHTML = result.reactionSvg;
+    } else {
+      reactionDiagram.append(message("RDKit did not return a reaction SVG.", "warning"));
+    }
+    return;
   }
+
+  const montage = document.createElement("div");
+  montage.className = "reaction-montage";
+
+  reactants.forEach((record, index) => {
+    if (index > 0) montage.append(makeConnector("+"));
+    montage.append(makeReactionCell(record, record.highlightedSvg ?? record.svg, "reactant"));
+  });
+
+  montage.append(makeConnector("\u2192", result.reactionSmarts));
+
+  targets.forEach((record, index) => {
+    if (index > 0) montage.append(makeConnector("+"));
+    montage.append(makeReactionCell(record, record.svg, "product"));
+  });
+
+  reactionDiagram.append(montage);
+
+  const legend = document.createElement("p");
+  legend.className = "reaction-legend";
+  legend.textContent = anyHighlight
+    ? "Highlighted atoms and bonds match the reactant side of the SMARTS template."
+    : "SMARTS template did not bind to any reactant; showing molecules without highlights.";
+  reactionDiagram.append(legend);
+}
+
+function makeReactionCell(record, svg, role) {
+  const cell = document.createElement("figure");
+  cell.className = `reaction-cell reaction-cell--${role}`;
+  if (record.error) cell.classList.add("reaction-cell--invalid");
+  const body = document.createElement("div");
+  body.className = "reaction-cell-body";
+  if (svg) {
+    body.innerHTML = svg;
+  } else if (record.error) {
+    body.textContent = record.sourceSmiles ? record.sourceSmiles : "(empty)";
+    body.classList.add("reaction-cell-body--placeholder");
+  } else {
+    body.textContent = record.canonicalSmiles ?? record.label ?? "?";
+  }
+  const caption = document.createElement("figcaption");
+  caption.textContent = record.error
+    ? `${record.label} - invalid SMILES`
+    : record.label ?? record.canonicalSmiles ?? "";
+  cell.append(body, caption);
+  return cell;
+}
+
+function makeConnector(symbol, title) {
+  const node = document.createElement("span");
+  node.className = symbol === "\u2192" ? "reaction-arrow" : "reaction-plus";
+  node.textContent = symbol;
+  if (title) node.title = title;
+  return node;
 }
 
 function renderOutcomeTable(outcomes, bestIndex) {
@@ -163,7 +225,7 @@ function renderResult(result) {
   generatedFormula.textContent = result.generatedFormula ?? "-";
   bestSignature.textContent = result.bestLabel ?? "-";
 
-  renderDiagram(result.reactionSvg);
+  renderDiagram(result);
   renderGallery(targetGallery, result.targets, "No target products provided.");
   renderGallery(generatedGallery, best?.products ?? [], "No generated products for the best outcome.");
   renderOutcomeTable(result.outcomes, result.bestOutcomeIndex);
@@ -190,6 +252,50 @@ async function warmBoot() {
   rdkitStatus.textContent = "warming RDKit";
   const RDKitModule = await loadBrowserRdkit();
   rdkitStatus.textContent = `ready (${RDKitModule.version()})`;
+  rdkitReady = true;
+}
+
+let rdkitReady = false;
+let previewTimer = null;
+let runIsStale = false;
+
+function schedulePreview() {
+  if (!rdkitReady) return;
+  if (previewTimer) clearTimeout(previewTimer);
+  previewTimer = setTimeout(runPreview, 180);
+}
+
+async function runPreview() {
+  if (!rdkitReady) return;
+  try {
+    const preview = await previewReactionInBrowser(buildRequest());
+    renderDiagram(preview);
+    reactantFormula.textContent = preview.reactantFormula ?? "-";
+    targetFormula.textContent = preview.targetFormula ?? "-";
+    renderGallery(targetGallery, preview.targets ?? [], "No target products provided.");
+    markRunStale();
+  } catch (_error) {
+    // Ignore preview errors while the user is mid-typing.
+  }
+}
+
+function markRunStale() {
+  if (runIsStale) return;
+  runIsStale = true;
+  reactionVerdict.textContent = "preview";
+  reactionVerdict.dataset.state = "stale";
+  reactionSummary.textContent = "Live preview - click Run template to score outcomes.";
+  reactionWarnings.replaceChildren();
+  outcomeCount.textContent = "-";
+  matchScore.textContent = "-";
+  generatedFormula.textContent = "-";
+  bestSignature.textContent = "-";
+  renderGallery(generatedGallery, [], "Click Run template to generate outcomes.");
+  renderOutcomeTable([], null);
+}
+
+function clearRunStale() {
+  runIsStale = false;
 }
 
 async function submitRequest(event) {
@@ -212,6 +318,7 @@ async function submitRequest(event) {
     bridgeStatus.textContent = "running template";
     const result = await run_rdkit_bridge(request, rdkitTemplateAdapterBrowser);
     renderResult(result);
+    clearRunStale();
     bridgeStatus.textContent = "template complete";
   } catch (error) {
     reactionSummary.textContent = String(error);
@@ -220,6 +327,10 @@ async function submitRequest(event) {
     bridgeStatus.textContent = "execution failed";
     resetResultView();
   }
+}
+
+for (const input of [reactantInput, productInput, reactionSmartsInput]) {
+  input.addEventListener("input", schedulePreview);
 }
 
 form.addEventListener("submit", submitRequest);
