@@ -8,12 +8,12 @@ pub enum SmartslopError {
     SerializeResponse(String),
     #[error("request validation failed")]
     ValidationFailed,
-    #[error("rdkit adapter threw an exception")]
-    RdkitAdapterThrew,
+    #[error("rdkit adapter threw an exception: {0}")]
+    RdkitAdapterThrew(String),
     #[error("rdkit adapter must return a Promise")]
     AdapterMustReturnPromise,
-    #[error("rdkit adapter promise was rejected")]
-    RdkitAdapterRejected,
+    #[error("rdkit adapter promise was rejected: {0}")]
+    RdkitAdapterRejected(String),
 }
 
 impl SmartslopError {

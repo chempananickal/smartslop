@@ -29,103 +29,113 @@ const pkgDir = path.join(rootDir, "pkg-node");
 const wasmModule = await import(pathToFileURL(path.join(pkgDir, "smartslop_wasm.js")).href);
 const { rdkitTemplateAdapter } = await import(pathToFileURL(path.join(rootDir, "js", "rdkit-bridge.mjs")).href);
 
-const sampleRequest = {
-  reactants: [
-    {
-      format: "smiles",
-      value: "CCBr",
-      label: "bromoethane"
-    },
-    {
-      format: "smiles",
-      value: "O",
-      label: "water"
-    }
-  ],
-  products: [
-    {
-      format: "smiles",
-      value: "CCO",
-      label: "ethanol"
-    }
-  ],
-  reaction_smarts: "[CH3:1][CH2:2][Br:3].[OH2:4]>>[CH3:1][CH2:2][OH:4]",
-  include_stereochemistry: true,
-  template_name: "verification-template"
-};
-
-const result = await wasmModule.run_rdkit_bridge(sampleRequest, rdkitTemplateAdapter);
-
-if (result.status !== "rdkit_ready") {
-  throw new Error(`Unexpected bridge status: ${result.status}`);
+function assert(condition, message) {
+  if (!condition) throw new Error(message);
 }
 
-if (!result.rdkitVersion) {
-  throw new Error("RDKit version was not returned by the adapter.");
+function baseRequest(overrides = {}) {
+  return {
+    reactants: [
+      { value: "CCBr", label: "bromoethane" },
+      { value: "O", label: "water" }
+    ],
+    products: [{ value: "CCO", label: "ethanol" }],
+    reaction_smarts: "[CH3:1][CH2:2][Br:3].[OH2:4]>>[CH3:1][CH2:2][OH:4]",
+    template_name: "verification-template",
+    ...overrides
+  };
 }
 
-if (result.reactants.length !== 2 || result.products.length !== 1) {
-  throw new Error("RDKit bridge did not preserve the reaction sides.");
+// 1. Exact match, canonical ordering.
+{
+  const result = await wasmModule.run_rdkit_bridge(baseRequest(), rdkitTemplateAdapter);
+  assert(result.status === "rdkit_ready", `unexpected status: ${result.status}`);
+  assert(result.rdkitVersion, "missing RDKit version");
+  assert(result.reactants.length === 2 && result.targets.length === 1, "reaction sides not preserved");
+  assert(result.targets[0].canonicalSmiles === "CCO", `unexpected canonical target: ${result.targets[0].canonicalSmiles}`);
+  assert(result.verdict === "exact_match", `unexpected verdict: ${result.verdict}`);
+  assert(result.reactionSvg?.includes("<svg"), "expected reaction SVG");
+  assert(result.bestOutcomeIndex !== null, "expected a best outcome");
+  const best = result.outcomes[result.bestOutcomeIndex];
+  assert(best.products.length === 1 && best.products[0].canonicalSmiles === "CCO", `best outcome mismatch: ${JSON.stringify(best)}`);
+  // The user-supplied target omits the HBr byproduct implied by the SMARTS,
+  // so we expect a heavy-atom imbalance warning on Br.
+  assert(
+    result.warnings.some((message) => message.includes("Br")),
+    `expected Br byproduct warning, got: ${JSON.stringify(result.warnings)}`
+  );
 }
 
-if (result.analysisType !== "reaction_template_execution") {
-  throw new Error(`Unexpected analysis type: ${result.analysisType}`);
+// 1b. When the target set includes every heavy atom on the reactant side the
+//     balance check should stay quiet.
+{
+  const request = baseRequest({
+    products: [
+      { value: "CCO", label: "ethanol" },
+      { value: "Br", label: "hydrogen bromide" }
+    ]
+  });
+  const result = await wasmModule.run_rdkit_bridge(request, rdkitTemplateAdapter);
+  assert(result.warnings.length === 0, `expected no warnings, got: ${JSON.stringify(result.warnings)}`);
 }
 
-if (result.products[0].canonicalSmiles !== "CCO") {
-  throw new Error(`Unexpected canonical product SMILES: ${result.products[0].canonicalSmiles}`);
+// 2. Reactants supplied in the "wrong" order still find the match via
+//    permutation-aware execution.
+{
+  const request = baseRequest({
+    reactants: [
+      { value: "O", label: "water" },
+      { value: "CCBr", label: "bromoethane" }
+    ]
+  });
+  const result = await wasmModule.run_rdkit_bridge(request, rdkitTemplateAdapter);
+  assert(result.verdict === "exact_match", `permutation execution failed, verdict: ${result.verdict}`);
 }
 
-if (result.reactionCheck.verdict !== "template_exact_match") {
-  throw new Error(`Unexpected reaction verdict: ${result.reactionCheck.verdict}`);
+// 3. Off-target: SMARTS runs cleanly but produces something other than the
+//    requested product.
+{
+  const request = baseRequest({
+    products: [{ value: "C=C", label: "ethene" }],
+    template_name: "off-target"
+  });
+  const result = await wasmModule.run_rdkit_bridge(request, rdkitTemplateAdapter);
+  assert(result.verdict === "no_match", `expected no_match, got: ${result.verdict}`);
+  const best = result.outcomes[result.bestOutcomeIndex];
+  assert(best.comparison.unexpectedProducts[0] === "CCO", `expected ethanol as unexpected, got: ${JSON.stringify(best.comparison)}`);
 }
 
-if (!result.reactionTemplate?.svg?.includes("<svg")) {
-  throw new Error("Expected a rendered reaction SVG from RDKit.");
+// 4. Heavy-atom balance warning: request only ethanol from bromoethane
+//    (no water reactant supplied), so O is short on the reactant side.
+{
+  const request = baseRequest({
+    reactants: [{ value: "CCBr", label: "bromoethane" }]
+  });
+  const result = await wasmModule.run_rdkit_bridge(request, rdkitTemplateAdapter);
+  assert(
+    result.warnings.some((message) => message.includes("Heavy-atom imbalance")),
+    `expected heavy-atom warning, got: ${JSON.stringify(result.warnings)}`
+  );
 }
 
-if (!result.bestOutcome || result.bestOutcome.products.length !== 1) {
-  throw new Error(`Expected a single best generated product set, got: ${JSON.stringify(result.bestOutcome)}`);
+// 5. Rust-side validation surfaces atom-mapping warnings without blocking.
+{
+  const validation = wasmModule.validate_template_request(
+    baseRequest({ reaction_smarts: "CCBr.O>>CCO" })
+  );
+  assert(validation.ok, "unmapped SMARTS should still be ok=true");
+  assert(
+    validation.messages.some((m) => m.level === "warning" && m.message.includes("no atom maps")),
+    `expected atom-map warning, got: ${JSON.stringify(validation.messages)}`
+  );
 }
 
-if (!result.reactionCheck.possible || !result.reactionCheck.comparison?.exact) {
-  throw new Error(`Expected an exact template match, got: ${JSON.stringify(result.reactionCheck)}`);
-}
-
-const offTargetRequest = {
-  reactants: [
-    {
-      format: "smiles",
-      value: "CCBr",
-      label: "bromoethane"
-    },
-    {
-      format: "smiles",
-      value: "O",
-      label: "water"
-    }
-  ],
-  products: [
-    {
-      format: "smiles",
-      value: "C=C",
-      label: "ethene"
-    }
-  ],
-  reaction_smarts: "[CH3:1][CH2:2][Br:3].[OH2:4]>>[CH3:1][CH2:2][OH:4]",
-  include_stereochemistry: false,
-  template_name: "off-target-verification"
-};
-
-const offTargetResult = await wasmModule.run_rdkit_bridge(offTargetRequest, rdkitTemplateAdapter);
-
-if (offTargetResult.reactionCheck.verdict !== "template_generated_other_products") {
-  throw new Error(`Expected off-target verdict, got: ${offTargetResult.reactionCheck.verdict}`);
-}
-
-if (offTargetResult.reactionCheck.comparison?.unexpectedProducts[0] !== "CCO") {
-  throw new Error(`Expected generated ethanol to be reported as unexpected, got: ${JSON.stringify(offTargetResult.reactionCheck.comparison)}`);
+// 6. Rust-side validation blocks structurally invalid SMARTS before hitting RDKit.
+{
+  const validation = wasmModule.validate_template_request(
+    baseRequest({ reaction_smarts: "CCBr.O>CCO" })
+  );
+  assert(!validation.ok, "malformed SMARTS should not validate");
 }
 
 console.log("RDKit bridge verified.");
-console.log(JSON.stringify(result, null, 2));

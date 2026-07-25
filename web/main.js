@@ -7,26 +7,28 @@ import {
   rdkitTemplateAdapterBrowser
 } from "./rdkit-browser.mjs";
 
-const form = document.querySelector("#template-form");
-const reactantInput = document.querySelector("#reactant-input");
-const productInput = document.querySelector("#product-input");
-const reactionSmartsInput = document.querySelector("#reaction-smarts-input");
-const stereoInput = document.querySelector("#stereo-input");
-const bridgeStatus = document.querySelector("#bridge-status");
-const rdkitStatus = document.querySelector("#rdkit-status");
-const reactionSummary = document.querySelector("#reaction-summary");
-const reactionVerdict = document.querySelector("#reaction-verdict");
-const reactionDiagram = document.querySelector("#reaction-diagram");
-const outcomeCount = document.querySelector("#outcome-count");
-const matchScore = document.querySelector("#match-score");
-const reactantFormula = document.querySelector("#reactant-formula");
-const targetFormula = document.querySelector("#target-formula");
-const generatedFormula = document.querySelector("#generated-formula");
-const bestSignature = document.querySelector("#best-signature");
-const targetGallery = document.querySelector("#target-gallery");
-const generatedGallery = document.querySelector("#generated-gallery");
-const outcomeTableBody = document.querySelector("#outcome-table-body");
-const validationOutput = document.querySelector("#validation-output");
+const el = (id) => document.getElementById(id);
+
+const form = el("template-form");
+const reactantInput = el("reactant-input");
+const productInput = el("product-input");
+const reactionSmartsInput = el("reaction-smarts-input");
+const bridgeStatus = el("bridge-status");
+const rdkitStatus = el("rdkit-status");
+const reactionSummary = el("reaction-summary");
+const reactionVerdict = el("reaction-verdict");
+const reactionDiagram = el("reaction-diagram");
+const reactionWarnings = el("reaction-warnings");
+const outcomeCount = el("outcome-count");
+const matchScore = el("match-score");
+const reactantFormula = el("reactant-formula");
+const targetFormula = el("target-formula");
+const generatedFormula = el("generated-formula");
+const bestSignature = el("best-signature");
+const targetGallery = el("target-gallery");
+const generatedGallery = el("generated-gallery");
+const outcomeTableBody = el("outcome-table-body");
+const validationOutput = el("validation-output");
 
 function splitSmilesField(rawValue) {
   return rawValue
@@ -39,124 +41,107 @@ function splitSmilesField(rawValue) {
 function buildRequest() {
   return {
     reactants: splitSmilesField(reactantInput.value).map((value, index) => ({
-      format: "smiles",
       value,
       label: `reactant ${index + 1}`
     })),
     products: splitSmilesField(productInput.value).map((value, index) => ({
-      format: "smiles",
       value,
       label: `target ${index + 1}`
     })),
     reaction_smarts: reactionSmartsInput.value,
-    include_stereochemistry: stereoInput.checked,
-    template_name: "browser-demo"
+    template_name: "browser"
   };
 }
 
 function formatVerdict(verdict) {
-  return verdict
-    .split("_")
-    .map((word) => `${word.charAt(0).toUpperCase()}${word.slice(1)}`)
-    .join(" ");
+  return verdict.replace(/_/g, " ");
 }
 
-function createMessage(text, level = "info") {
-  const message = document.createElement("p");
-  message.className = `message message--${level}`;
-  message.textContent = text;
-  return message;
+function message(text, level = "info") {
+  const node = document.createElement("p");
+  node.className = `message message--${level}`;
+  node.textContent = text;
+  return node;
 }
 
 function renderValidation(report) {
   validationOutput.replaceChildren();
 
   if (!report.messages.length) {
-    validationOutput.append(
-      createMessage("Request is structurally valid and ready for RDKit execution.", "success")
-    );
+    validationOutput.append(message("Request is valid.", "success"));
     return;
   }
 
   for (const entry of report.messages) {
-    validationOutput.append(createMessage(`${entry.field}: ${entry.message}`, entry.level));
+    validationOutput.append(message(`${entry.field}: ${entry.message}`, entry.level));
   }
 }
 
-function createMoleculeCard(record) {
+function renderWarnings(warnings) {
+  reactionWarnings.replaceChildren();
+  for (const warning of warnings ?? []) {
+    reactionWarnings.append(message(warning, "warning"));
+  }
+}
+
+function moleculeCard(record) {
   const card = document.createElement("article");
   card.className = "molecule-card";
 
-  const heading = document.createElement("header");
-  heading.className = "molecule-card-header";
-  heading.innerHTML = `<strong>${record.label}</strong><span>${record.formula ?? "Unknown"}</span>`;
+  const header = document.createElement("header");
+  header.innerHTML = `<strong>${record.label}</strong><span>${record.formula ?? "?"}</span>`;
 
   const body = document.createElement("div");
-  body.className = "molecule-card-body";
-
+  body.className = "body";
   if (record.svg) {
     body.innerHTML = record.svg;
   } else {
-    body.append(createMessage(record.formula ?? "Unavailable", "warning"));
+    body.textContent = record.formula ?? "unavailable";
   }
 
   const footer = document.createElement("footer");
-  footer.className = "molecule-card-footer";
-  footer.innerHTML = `
-    <span>${record.canonicalSmiles ?? "No resolved SMILES"}</span>
-  `;
+  footer.textContent = record.canonicalSmiles ?? "no SMILES";
 
-  card.append(heading, body, footer);
+  card.append(header, body, footer);
   return card;
 }
 
 function renderGallery(target, records, emptyLabel) {
   target.replaceChildren();
-
-  if (!records.length) {
+  if (!records?.length) {
     const empty = document.createElement("p");
     empty.className = "empty-gallery";
     empty.textContent = emptyLabel;
     target.append(empty);
     return;
   }
-
-  for (const record of records) {
-    target.append(createMoleculeCard(record));
-  }
+  for (const record of records) target.append(moleculeCard(record));
 }
 
-function renderReactionDiagram(result) {
+function renderDiagram(svg) {
   reactionDiagram.replaceChildren();
-
-  if (result.reactionTemplate?.svg) {
-    reactionDiagram.innerHTML = result.reactionTemplate.svg;
-    return;
+  if (svg) {
+    reactionDiagram.innerHTML = svg;
+  } else {
+    reactionDiagram.append(message("RDKit did not return a reaction SVG.", "warning"));
   }
-
-  reactionDiagram.append(createMessage("RDKit did not return a reaction SVG for this template.", "warning"));
 }
 
-function renderOutcomeTable(result) {
+function renderOutcomeTable(outcomes, bestIndex) {
   outcomeTableBody.replaceChildren();
-
-  if (!result.generatedOutcomes.length) {
+  if (!outcomes.length) {
     const row = document.createElement("tr");
     row.innerHTML = `<td colspan="4" class="empty-row">No outcome sets generated.</td>`;
     outcomeTableBody.append(row);
     return;
   }
-
-  for (const outcome of result.generatedOutcomes) {
+  for (const outcome of outcomes) {
     const row = document.createElement("tr");
-    if (outcome.index === result.reactionCheck.bestOutcomeIndex) {
-      row.className = "is-best";
-    }
-
+    if (outcome.index === bestIndex) row.className = "is-best";
     row.innerHTML = `
       <td>${outcome.index + 1}</td>
       <td>${formatVerdict(outcome.comparison.verdict)}</td>
-      <td>${outcome.signature}</td>
+      <td>${outcome.label}</td>
       <td>${Math.round(outcome.comparison.score * 100)}%</td>
     `;
     outcomeTableBody.append(row);
@@ -164,22 +149,24 @@ function renderOutcomeTable(result) {
 }
 
 function renderResult(result) {
-  reactionSummary.textContent = result.reactionCheck.summary;
-  reactionVerdict.textContent = formatVerdict(result.reactionCheck.verdict);
-  reactionVerdict.dataset.state = result.reactionCheck.verdict;
-  outcomeCount.textContent = String(result.reactionCheck.outcomeCount);
-  matchScore.textContent = result.reactionCheck.comparison
-    ? `${Math.round(result.reactionCheck.comparison.score * 100)}%`
-    : "0%";
-  reactantFormula.textContent = result.reactionCheck.reactantFormula;
-  targetFormula.textContent = result.reactionCheck.targetFormula;
-  generatedFormula.textContent = result.reactionCheck.generatedFormula ?? "No products";
-  bestSignature.textContent = result.bestOutcome?.signature ?? "No products";
+  reactionSummary.textContent = result.summary;
+  reactionVerdict.textContent = formatVerdict(result.verdict);
+  reactionVerdict.dataset.state = result.verdict;
 
-  renderReactionDiagram(result);
-  renderGallery(targetGallery, result.products, "No target products provided.");
-  renderGallery(generatedGallery, result.bestOutcome?.products ?? [], "No generated products for the best outcome.");
-  renderOutcomeTable(result);
+  renderWarnings(result.warnings);
+
+  outcomeCount.textContent = String(result.outcomes.length);
+  const best = result.bestOutcomeIndex !== null ? result.outcomes[result.bestOutcomeIndex] : null;
+  matchScore.textContent = best ? `${Math.round(best.comparison.score * 100)}%` : "0%";
+  reactantFormula.textContent = result.reactantFormula;
+  targetFormula.textContent = result.targetFormula;
+  generatedFormula.textContent = result.generatedFormula ?? "-";
+  bestSignature.textContent = result.bestLabel ?? "-";
+
+  renderDiagram(result.reactionSvg);
+  renderGallery(targetGallery, result.targets, "No target products provided.");
+  renderGallery(generatedGallery, best?.products ?? [], "No generated products for the best outcome.");
+  renderOutcomeTable(result.outcomes, result.bestOutcomeIndex);
 }
 
 function resetResultView() {
@@ -190,16 +177,16 @@ function resetResultView() {
   generatedFormula.textContent = "-";
   bestSignature.textContent = "-";
   reactionDiagram.replaceChildren();
+  reactionWarnings.replaceChildren();
   renderGallery(targetGallery, [], "No target products provided.");
   renderGallery(generatedGallery, [], "No generated products for the best outcome.");
-  renderOutcomeTable({ generatedOutcomes: [], reactionCheck: { bestOutcomeIndex: null } });
+  renderOutcomeTable([], null);
 }
 
 async function warmBoot() {
   bridgeStatus.textContent = "initializing wasm";
   await init();
   bridgeStatus.textContent = "wasm ready";
-
   rdkitStatus.textContent = "warming RDKit";
   const RDKitModule = await loadBrowserRdkit();
   rdkitStatus.textContent = `ready (${RDKitModule.version()})`;
@@ -214,8 +201,8 @@ async function submitRequest(event) {
 
   if (!validation.ok) {
     bridgeStatus.textContent = "validation failed";
-    reactionVerdict.textContent = "Invalid Input";
-    reactionVerdict.dataset.state = "invalid_reaction_smarts";
+    reactionVerdict.textContent = "invalid input";
+    reactionVerdict.dataset.state = "error";
     reactionSummary.textContent = "Fix the validation errors before running the template.";
     resetResultView();
     return;
@@ -228,8 +215,8 @@ async function submitRequest(event) {
     bridgeStatus.textContent = "template complete";
   } catch (error) {
     reactionSummary.textContent = String(error);
-    reactionVerdict.textContent = "Execution Failed";
-    reactionVerdict.dataset.state = "template_execution_failed";
+    reactionVerdict.textContent = "execution failed";
+    reactionVerdict.dataset.state = "error";
     bridgeStatus.textContent = "execution failed";
     resetResultView();
   }
@@ -243,7 +230,7 @@ warmBoot()
     bridgeStatus.textContent = "boot failed";
     rdkitStatus.textContent = "unavailable";
     reactionSummary.textContent = String(error);
-    reactionVerdict.textContent = "Boot Failed";
-    reactionVerdict.dataset.state = "template_execution_failed";
+    reactionVerdict.textContent = "boot failed";
+    reactionVerdict.dataset.state = "error";
     resetResultView();
   });

@@ -8,164 +8,101 @@
     <link data-trunk rel="copy-dir" href="web" />
     <link data-trunk rel="copy-dir" href="vendor" />
     <link data-trunk rel="copy-dir" href="pkg-web" />
-    <link rel="stylesheet" href="./web/styles.css?v=20260725b" />
+    <link rel="stylesheet" href="./web/styles.css?v=20260725c" />
   </head>
   <body>
-    <main class="app-frame">
-      <header class="topbar">
-        <div class="brand-block">
-          <p class="eyebrow">smartslop</p>
-          <h1>Reaction Template Evaluator</h1>
-          <p class="app-copy">
-            Execute mapped reaction SMARTS against reactants, inspect the RDKit-rendered template,
-            and compare generated outcomes to the target products.
-          </p>
-        </div>
-        <div class="status-strip">
-          <div class="status-chip">
-            <span class="status-label">Bridge</span>
-            <strong id="bridge-status">booting</strong>
-          </div>
-          <div class="status-chip">
-            <span class="status-label">RDKit</span>
-            <strong id="rdkit-status">loading</strong>
-          </div>
-        </div>
+    <main class="app">
+      <header class="app-header">
+        <h1>smartslop &mdash; reaction template evaluator</h1>
+        <p class="status-line">
+          bridge: <span id="bridge-status">booting</span> &middot;
+          rdkit: <span id="rdkit-status">loading</span>
+        </p>
       </header>
 
-      <section class="screen-shell">
-        <aside class="control-panel panel-card">
-          <form id="template-form" class="template-form">
-            <div class="panel-heading">
-              <p class="section-kicker">Template Inputs</p>
-              <h2>Inputs</h2>
-              <p class="panel-copy">
-                Use the target product field to score the generated outcome sets from the supplied reaction SMARTS.
-              </p>
-            </div>
+      <div class="layout">
+        <aside class="sidebar">
+          <form id="template-form">
             <label>
               <span>Reactant SMILES</span>
-              <small>Use one molecule per line or separate molecules with dots.</small>
-              <textarea id="reactant-input" rows="5">CCBr
+              <small>One per line or dot-separated.</small>
+              <textarea id="reactant-input" rows="4">CCBr
 O</textarea>
             </label>
             <label>
-              <span>Target Product SMILES</span>
-              <small>These products are used only for comparison against generated outcomes.</small>
-              <textarea id="product-input" rows="4">CCO</textarea>
+              <span>Target product SMILES</span>
+              <small>Used to score the generated outcomes.</small>
+              <textarea id="product-input" rows="3">CCO</textarea>
             </label>
             <label>
               <span>Reaction SMARTS</span>
-              <small>Atom-mapped reaction SMARTS gives the most reliable execution results.</small>
-              <textarea id="reaction-smarts-input" rows="6">[CH3:1][CH2:2][Br:3].[OH2:4]>>[CH3:1][CH2:2][OH:4]</textarea>
+              <small>Atom-mapped templates give the most reliable results.</small>
+              <textarea id="reaction-smarts-input" rows="4">[CH3:1][CH2:2][Br:3].[OH2:4]>>[CH3:1][CH2:2][OH:4]</textarea>
             </label>
-            <label class="checkbox-row">
-              <input id="stereo-input" type="checkbox" checked />
-              <span>Preserve stereochemistry flag in the bridge request</span>
-            </label>
-            <button type="submit">Run Template</button>
+            <button type="submit">Run template</button>
           </form>
 
-          <section class="validation-panel">
-            <div class="panel-heading compact-heading">
-              <p class="section-kicker">Gate</p>
-              <h2>Validation</h2>
-            </div>
-            <div id="validation-output" class="message-list">Waiting for input...</div>
+          <section class="validation">
+            <h2>Validation</h2>
+            <div id="validation-output" class="messages">Waiting for input...</div>
           </section>
         </aside>
 
-        <section class="workspace-panel">
-          <section class="viewer-card panel-card">
-            <div class="viewer-header">
+        <section class="workspace">
+          <section class="card">
+            <div class="card-head">
+              <h2>Reaction template</h2>
+              <span id="reaction-verdict" class="verdict" data-state="pending">Pending</span>
+            </div>
+            <p id="reaction-summary" class="summary">Waiting for RDKit analysis...</p>
+            <div id="reaction-warnings" class="messages"></div>
+            <div id="reaction-diagram" class="reaction-canvas"></div>
+            <dl class="facts">
+              <div><dt>Outcome sets</dt><dd id="outcome-count">-</dd></div>
+              <div><dt>Best match</dt><dd id="match-score">-</dd></div>
+              <div><dt>Best outcome</dt><dd id="best-signature">-</dd></div>
+              <div><dt>Reactant formula</dt><dd id="reactant-formula">-</dd></div>
+              <div><dt>Target formula</dt><dd id="target-formula">-</dd></div>
+              <div><dt>Generated formula</dt><dd id="generated-formula">-</dd></div>
+            </dl>
+          </section>
+
+          <section class="card">
+            <div class="card-head">
+              <h2>Product bench</h2>
+            </div>
+            <div class="compare">
               <div>
-                <p class="section-kicker">Execution</p>
-                <h2>Reaction Template</h2>
-                <p id="reaction-summary" class="panel-copy">Waiting for RDKit analysis...</p>
+                <h3>Target products</h3>
+                <div id="target-gallery" class="molecule-strip"></div>
               </div>
-              <div id="reaction-verdict" class="status-pill" data-state="pending">Pending</div>
-            </div>
-            <div class="reaction-stage">
-              <div id="reaction-diagram" class="reaction-canvas"></div>
-              <aside class="reaction-readout">
-                <div class="readout-hero">
-                  <article class="metric-card metric-card--primary">
-                    <span>Best match</span>
-                    <strong id="match-score">-</strong>
-                  </article>
-                  <article class="metric-card metric-card--primary">
-                    <span>Best outcome</span>
-                    <strong id="best-signature">-</strong>
-                  </article>
-                </div>
-                <dl class="fact-list">
-                  <div class="fact-row">
-                    <dt>Outcome sets</dt>
-                    <dd id="outcome-count">-</dd>
-                  </div>
-                  <div class="fact-row">
-                    <dt>Reactant formula</dt>
-                    <dd id="reactant-formula">-</dd>
-                  </div>
-                  <div class="fact-row">
-                    <dt>Target formula</dt>
-                    <dd id="target-formula">-</dd>
-                  </div>
-                  <div class="fact-row">
-                    <dt>Generated formula</dt>
-                    <dd id="generated-formula">-</dd>
-                  </div>
-                </dl>
-              </aside>
+              <div>
+                <h3>Best generated outcome</h3>
+                <div id="generated-gallery" class="molecule-strip"></div>
+              </div>
             </div>
           </section>
 
-          <section class="panel-card product-bench">
-            <div class="panel-heading compact-heading">
-              <p class="section-kicker">Comparison</p>
-              <h2>Product Bench</h2>
+          <section class="card">
+            <div class="card-head">
+              <h2>Enumerated outcomes</h2>
             </div>
-            <div class="comparison-grid">
-              <section class="comparison-panel comparison-panel--target">
-                <header class="bench-lane-header">
-                  <p class="section-kicker">Reference</p>
-                  <h3>Target Products</h3>
-                </header>
-                <div id="target-gallery" class="molecule-strip molecule-strip--bench"></div>
-              </section>
-              <section class="comparison-panel comparison-panel--generated">
-                <header class="bench-lane-header">
-                  <p class="section-kicker">Generated</p>
-                  <h3>Best Generated Outcome</h3>
-                </header>
-                <div id="generated-gallery" class="molecule-strip molecule-strip--bench"></div>
-              </section>
-            </section>
-          </section>
-
-          <section class="panel-card outcomes-card">
-            <div class="panel-heading compact-heading">
-              <p class="section-kicker">Enumeration</p>
-              <h2>Enumerated Outcomes</h2>
-            </div>
-            <div class="outcome-table-shell">
-              <table class="outcome-table">
-                <thead>
-                  <tr>
-                    <th>Outcome</th>
-                    <th>Verdict</th>
-                    <th>Products</th>
-                    <th>Score</th>
-                  </tr>
-                </thead>
-                <tbody id="outcome-table-body"></tbody>
-              </table>
-            </div>
+            <table class="outcomes">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Verdict</th>
+                  <th>Products</th>
+                  <th>Score</th>
+                </tr>
+              </thead>
+              <tbody id="outcome-table-body"></tbody>
+            </table>
           </section>
         </section>
-      </section>
+      </div>
     </main>
 
     <script type="module" src="./web/main.js"></script>
   </body>
-  </html>
+</html>

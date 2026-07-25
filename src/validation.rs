@@ -1,6 +1,7 @@
+use std::collections::HashSet;
+
 use crate::models::{
-    MessageLevel, MoleculeFormat, MoleculeInput, NextStep, TemplateBuildRequest,
-    ValidationMessage, ValidationReport,
+    MessageLevel, MoleculeInput, TemplateBuildRequest, ValidationMessage, ValidationReport,
 };
 
 pub fn validate_request(request: &TemplateBuildRequest) -> ValidationReport {
@@ -16,65 +17,114 @@ pub fn validate_request(request: &TemplateBuildRequest) -> ValidationReport {
     if request.products.is_empty() {
         messages.push(error_message(
             "products",
-            "At least one product input is required.",
+            "At least one target product input is required.",
         ));
     }
 
     validate_molecules("reactants", &request.reactants, &mut messages);
     validate_molecules("products", &request.products, &mut messages);
-    validate_reaction_smarts(request.reaction_smarts.as_deref(), &mut messages);
+    validate_reaction_smarts(&request.reaction_smarts, &mut messages);
 
     let ok = !messages
         .iter()
         .any(|message| message.level == MessageLevel::Error);
 
-    ValidationReport {
-        ok,
-        requires_rdkit: ok,
-        next_step: if ok {
-            NextStep::InvokeRdkitBridge
-        } else {
-            NextStep::FixValidationErrors
-        },
-        messages,
-    }
+    ValidationReport { ok, messages }
 }
 
-fn validate_reaction_smarts(value: Option<&str>, messages: &mut Vec<ValidationMessage>) {
-    let Some(raw_value) = value else {
-        messages.push(error_message(
-            "reaction_smarts",
-            "Reaction SMARTS is required for template execution.",
-        ));
-        return;
-    };
-
+fn validate_reaction_smarts(raw_value: &str, messages: &mut Vec<ValidationMessage>) {
     let trimmed = raw_value.trim();
 
     if trimmed.is_empty() {
         messages.push(error_message(
             "reaction_smarts",
-            "Reaction SMARTS cannot be empty when provided.",
+            "Reaction SMARTS is required.",
         ));
         return;
     }
 
-    if !trimmed.contains(">>") {
+    let Some((lhs, rhs)) = trimmed.split_once(">>") else {
         messages.push(error_message(
             "reaction_smarts",
             "Reaction SMARTS must contain a '>>' separator between reactants and products.",
         ));
+        return;
+    };
+
+    if lhs.trim().is_empty() || rhs.trim().is_empty() {
+        messages.push(error_message(
+            "reaction_smarts",
+            "Reaction SMARTS must have atoms on both sides of '>>'.",
+        ));
+        return;
     }
 
-    if !trimmed.contains(':') {
+    let lhs_maps = collect_atom_maps(lhs);
+    let rhs_maps = collect_atom_maps(rhs);
+
+    if lhs_maps.is_empty() && rhs_maps.is_empty() {
         messages.push(warning_message(
             "reaction_smarts",
-            "Reaction SMARTS without atom-mapping may execute poorly or fail to produce useful product sets.",
+            "Reaction SMARTS has no atom maps (e.g. [C:1]). Unmapped templates often generate unrelated products.",
+        ));
+        return;
+    }
+
+    let unmapped_rhs: Vec<u32> = rhs_maps.difference(&lhs_maps).copied().collect();
+    if !unmapped_rhs.is_empty() {
+        let mut sorted = unmapped_rhs;
+        sorted.sort();
+        messages.push(warning_message(
+            "reaction_smarts",
+            &format!(
+                "Product side references atom maps not present on the reactant side: {sorted:?}. RDKit will treat these as new atoms."
+            ),
+        ));
+    }
+
+    let dropped_lhs: Vec<u32> = lhs_maps.difference(&rhs_maps).copied().collect();
+    if !dropped_lhs.is_empty() {
+        let mut sorted = dropped_lhs;
+        sorted.sort();
+        messages.push(warning_message(
+            "reaction_smarts",
+            &format!(
+                "Reactant atom maps missing from products: {sorted:?}. Those atoms will be dropped from the generated products."
+            ),
         ));
     }
 }
 
-fn validate_molecules(scope: &str, molecules: &[MoleculeInput], messages: &mut Vec<ValidationMessage>) {
+fn collect_atom_maps(side: &str) -> HashSet<u32> {
+    let mut maps = HashSet::new();
+    let bytes = side.as_bytes();
+    let mut index = 0;
+
+    while index < bytes.len() {
+        if bytes[index] == b':' {
+            let mut end = index + 1;
+            while end < bytes.len() && bytes[end].is_ascii_digit() {
+                end += 1;
+            }
+            if end > index + 1
+                && let Ok(value) = side[index + 1..end].parse::<u32>()
+            {
+                maps.insert(value);
+            }
+            index = end;
+        } else {
+            index += 1;
+        }
+    }
+
+    maps
+}
+
+fn validate_molecules(
+    scope: &str,
+    molecules: &[MoleculeInput],
+    messages: &mut Vec<ValidationMessage>,
+) {
     for (index, molecule) in molecules.iter().enumerate() {
         let field = format!("{scope}[{index}]");
         let trimmed = molecule.value.trim();
@@ -84,48 +134,12 @@ fn validate_molecules(scope: &str, molecules: &[MoleculeInput], messages: &mut V
             continue;
         }
 
-        match molecule.format {
-            MoleculeFormat::Smiles => validate_smiles(&field, trimmed, messages),
-            MoleculeFormat::Sdf | MoleculeFormat::Molfile => {
-                validate_structure_block(&field, trimmed, messages)
-            }
-            MoleculeFormat::GraphJson => validate_graph_json(&field, trimmed, messages),
+        if trimmed.lines().count() > 1 {
+            messages.push(warning_message(
+                &field,
+                "SMILES input is usually a single line; extra lines will be ignored.",
+            ));
         }
-    }
-}
-
-fn validate_smiles(field: &str, value: &str, messages: &mut Vec<ValidationMessage>) {
-    if value.lines().count() > 1 {
-        messages.push(warning_message(
-            field,
-            "SMILES input is usually a single line. Extra lines will need normalization before RDKit processing.",
-        ));
-    }
-}
-
-fn validate_structure_block(field: &str, value: &str, messages: &mut Vec<ValidationMessage>) {
-    if !value.contains("M  END") {
-        messages.push(error_message(
-            field,
-            "Structure blocks must include an 'M  END' record.",
-        ));
-    }
-}
-
-fn validate_graph_json(field: &str, value: &str, messages: &mut Vec<ValidationMessage>) {
-    if !(value.starts_with('{') || value.starts_with('[')) {
-        messages.push(error_message(
-            field,
-            "Graph JSON input must start with '{' or '['.",
-        ));
-        return;
-    }
-
-    if let Err(error) = serde_json::from_str::<serde_json::Value>(value) {
-        messages.push(error_message(
-            field,
-            &format!("Graph JSON input is not valid JSON: {error}"),
-        ));
     }
 }
 
@@ -151,7 +165,6 @@ mod tests {
 
     fn smiles_input(value: &str) -> MoleculeInput {
         MoleculeInput {
-            format: MoleculeFormat::Smiles,
             value: value.to_owned(),
             label: None,
         }
@@ -162,15 +175,14 @@ mod tests {
         let request = TemplateBuildRequest {
             reactants: Vec::new(),
             products: Vec::new(),
-            reaction_smarts: None,
-            include_stereochemistry: false,
+            reaction_smarts: String::new(),
             template_name: None,
         };
 
         let report = validate_request(&request);
 
         assert!(!report.ok);
-        assert_eq!(report.next_step, NextStep::FixValidationErrors);
+        // reactants, products, reaction_smarts
         assert_eq!(report.messages.len(), 3);
     }
 
@@ -179,44 +191,14 @@ mod tests {
         let request = TemplateBuildRequest {
             reactants: vec![smiles_input("CCO")],
             products: vec![smiles_input("CC=O")],
-            reaction_smarts: Some("[CH3:1][CH2:2][OH:3]>>[CH3:1][CH:2]=[O:3]".to_owned()),
-            include_stereochemistry: true,
+            reaction_smarts: "[CH3:1][CH2:2][OH:3]>>[CH3:1][CH:2]=[O:3]".to_owned(),
             template_name: Some("ethanol oxidation".to_owned()),
         };
 
         let report = validate_request(&request);
 
         assert!(report.ok);
-        assert!(report.requires_rdkit);
         assert!(report.messages.is_empty());
-        assert_eq!(report.next_step, NextStep::InvokeRdkitBridge);
-    }
-
-    #[test]
-    fn rejects_invalid_graph_json() {
-        let request = TemplateBuildRequest {
-            reactants: vec![MoleculeInput {
-                format: MoleculeFormat::GraphJson,
-                value: "{bad json}".to_owned(),
-                label: None,
-            }],
-            products: vec![smiles_input("CC=O")],
-            reaction_smarts: None,
-            include_stereochemistry: false,
-            template_name: None,
-        };
-
-        let report = validate_request(&request);
-
-        assert!(!report.ok);
-        assert!(report
-            .messages
-            .iter()
-            .any(|message| message.field == "reactants[0]"));
-        assert!(report
-            .messages
-            .iter()
-            .any(|message| message.field == "reaction_smarts"));
     }
 
     #[test]
@@ -224,36 +206,70 @@ mod tests {
         let request = TemplateBuildRequest {
             reactants: vec![smiles_input("CCBr")],
             products: vec![smiles_input("CCO")],
-            reaction_smarts: Some("CCBr.O>CCO".to_owned()),
-            include_stereochemistry: false,
+            reaction_smarts: "CCBr.O>CCO".to_owned(),
             template_name: None,
         };
 
         let report = validate_request(&request);
 
         assert!(!report.ok);
-        assert!(report
-            .messages
-            .iter()
-            .any(|message| message.field == "reaction_smarts"));
+        assert!(
+            report
+                .messages
+                .iter()
+                .any(|m| m.field == "reaction_smarts")
+        );
     }
 
     #[test]
-    fn rejects_missing_reaction_smarts() {
+    fn warns_on_unmapped_smarts() {
         let request = TemplateBuildRequest {
-            reactants: vec![smiles_input("CCBr")],
+            reactants: vec![smiles_input("CCBr"), smiles_input("O")],
             products: vec![smiles_input("CCO")],
-            reaction_smarts: None,
-            include_stereochemistry: false,
+            reaction_smarts: "CCBr.O>>CCO".to_owned(),
             template_name: None,
         };
 
         let report = validate_request(&request);
 
-        assert!(!report.ok);
+        assert!(report.ok);
+        assert!(report.messages.iter().any(|m| {
+            m.level == MessageLevel::Warning
+                && m.field == "reaction_smarts"
+                && m.message.contains("no atom maps")
+        }));
+    }
+
+    #[test]
+    fn warns_when_product_side_introduces_atom_maps() {
+        let request = TemplateBuildRequest {
+            reactants: vec![smiles_input("CCBr")],
+            products: vec![smiles_input("CCO")],
+            reaction_smarts: "[CH3:1][CH2:2][Br:3]>>[CH3:1][CH2:2][OH:4]".to_owned(),
+            template_name: None,
+        };
+
+        let report = validate_request(&request);
+        assert!(report.ok);
+        assert!(report.messages.iter().any(|m| m
+            .message
+            .contains("not present on the reactant side")));
+    }
+
+    #[test]
+    fn warns_when_reactant_maps_dropped() {
+        let request = TemplateBuildRequest {
+            reactants: vec![smiles_input("CCBr")],
+            products: vec![smiles_input("CC")],
+            reaction_smarts: "[CH3:1][CH2:2][Br:3]>>[CH3:1][CH3:2]".to_owned(),
+            template_name: None,
+        };
+
+        let report = validate_request(&request);
+        assert!(report.ok);
         assert!(report
             .messages
             .iter()
-            .any(|message| message.field == "reaction_smarts"));
+            .any(|m| m.message.contains("missing from products")));
     }
 }

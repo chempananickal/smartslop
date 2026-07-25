@@ -11,7 +11,7 @@ async function loadRdkitModule() {
   return rdkitModulePromise;
 }
 
-export async function rdkitTemplateAdapter(bridgeRequest) {
+export async function rdkitTemplateAdapter(request) {
   const RDKitModule = await loadRdkitModule();
-  return analyzeReactionRequest(RDKitModule, bridgeRequest);
+  return analyzeReactionRequest(RDKitModule, request);
 }

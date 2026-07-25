@@ -38,7 +38,7 @@ export async function loadBrowserRdkit() {
   return rdkitModulePromise;
 }
 
-export async function rdkitTemplateAdapterBrowser(bridgeRequest) {
+export async function rdkitTemplateAdapterBrowser(request) {
   const RDKitModule = await loadBrowserRdkit();
-  return analyzeReactionRequest(RDKitModule, bridgeRequest);
+  return analyzeReactionRequest(RDKitModule, request);
 }
