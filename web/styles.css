@@ -39,12 +39,40 @@ h3 { font-size: 0.85rem; font-weight: 600; color: var(--ink-soft); text-transfor
 
 .app-header {
   display: flex;
-  align-items: baseline;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 1rem;
   padding-bottom: 0.75rem;
   border-bottom: 1px solid var(--line);
   margin-bottom: 1rem;
+}
+
+.app-header-title {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 0;
+}
+
+.app-header-title h1 {
+  margin: 0;
+}
+
+.app-credits {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--ink-soft);
+}
+
+.app-credits a {
+  color: var(--ink);
+  text-decoration: underline;
+  text-decoration-color: var(--line);
+  text-underline-offset: 2px;
+}
+
+.app-credits a:hover {
+  text-decoration-color: currentColor;
 }
 
 .status-line {

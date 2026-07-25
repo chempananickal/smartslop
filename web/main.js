@@ -1,12 +1,9 @@
-import init, {
-  run_rdkit_bridge,
-  validate_template_request
-} from "../pkg-web/smartslop_wasm.js";
 import {
   loadBrowserRdkit,
   rdkitTemplateAdapterBrowser,
   previewReactionInBrowser
 } from "./rdkit-browser.mjs";
+import { validateTemplateRequest } from "../js/validation.mjs";
 
 const el = (id) => document.getElementById(id);
 
@@ -293,12 +290,11 @@ function resetResultView() {
 }
 
 async function warmBoot() {
-  bridgeStatus.textContent = "initializing wasm";
-  await init();
-  bridgeStatus.textContent = "wasm ready";
-  rdkitStatus.textContent = "warming RDKit";
+  bridgeStatus.textContent = "warming RDKit";
+  rdkitStatus.textContent = "loading";
   const RDKitModule = await loadBrowserRdkit();
   rdkitStatus.textContent = `ready (${RDKitModule.version()})`;
+  bridgeStatus.textContent = "idle";
   rdkitReady = true;
 }
 
@@ -357,7 +353,7 @@ async function submitRequest(event) {
   }
 
   const request = buildRequest();
-  const validation = validate_template_request(request);
+  const validation = validateTemplateRequest(request);
   renderValidation(validation);
 
   if (!validation.ok) {
@@ -371,7 +367,7 @@ async function submitRequest(event) {
 
   try {
     bridgeStatus.textContent = "evaluating";
-    const result = await run_rdkit_bridge(request, rdkitTemplateAdapterBrowser);
+    const result = await rdkitTemplateAdapterBrowser(request);
     renderResult(result);
     clearRunStale();
     bridgeStatus.textContent = "evaluation complete";

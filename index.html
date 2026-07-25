@@ -4,16 +4,20 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>SMARTSLOP - SMARTS Linter and Outcome Predictor</title>
-    <link data-trunk rel="copy-dir" href="js" />
-    <link data-trunk rel="copy-dir" href="web" />
-    <link data-trunk rel="copy-dir" href="vendor" />
-    <link data-trunk rel="copy-dir" href="pkg-web" />
-    <link rel="stylesheet" href="./web/styles.css?v=20260725h" />
+    <link rel="stylesheet" href="./web/styles.css?v=20260725i" />
   </head>
   <body>
     <main class="app">
       <header class="app-header">
-        <h1>SMARTSLOP &mdash; SMARTS Linter and Outcome Predictor</h1>
+        <div class="app-header-title">
+          <h1>SMARTSLOP &mdash; SMARTS Linter and Outcome Predictor</h1>
+          <p class="app-credits">
+            App created with the assistance of generative AI. Powered by
+            <a href="https://www.rdkit.org/" target="_blank" rel="noopener noreferrer">the RDKit</a>
+            via
+            <a href="https://www.rdkitjs.com/" target="_blank" rel="noopener noreferrer">RDKit.js</a>.
+          </p>
+        </div>
         <p class="status-line">
           engine: <span id="bridge-status">booting</span> &middot;
           rdkit: <span id="rdkit-status">loading</span>
