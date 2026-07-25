@@ -10,6 +10,43 @@ import {
 
 const el = (id) => document.getElementById(id);
 
+const HOVER_ATTR = "data-smarts-map";
+const HOVER_CLASS = "is-map-hover";
+
+function currentHoverTargets(mapNo) {
+  return document.querySelectorAll(`[${HOVER_ATTR}="${mapNo}"]`);
+}
+
+function setMapHover(mapNo, on) {
+  currentHoverTargets(mapNo).forEach((node) => node.classList.toggle(HOVER_CLASS, on));
+}
+
+function clearAllMapHover() {
+  document.querySelectorAll(`.${HOVER_CLASS}`).forEach((n) => n.classList.remove(HOVER_CLASS));
+}
+
+function wireAtomHover(container, atomMapToIdx) {
+  if (!container || !atomMapToIdx) return;
+  const idxToMap = new Map();
+  for (const [mapNo, idx] of Object.entries(atomMapToIdx)) idxToMap.set(Number(idx), Number(mapNo));
+  if (!idxToMap.size) return;
+  container.querySelectorAll('ellipse[class*="atom-"]').forEach((node) => {
+    const cls = node.getAttribute("class") || "";
+    const match = /(?:^|\s)atom-(\d+)(?:\s|$)/.exec(cls);
+    if (!match) return;
+    const idx = Number(match[1]);
+    if (!idxToMap.has(idx)) return;
+    const mapNo = idxToMap.get(idx);
+    node.setAttribute(HOVER_ATTR, String(mapNo));
+    node.setAttribute("pointer-events", "all");
+    const label = document.createElementNS("http://www.w3.org/2000/svg", "title");
+    label.textContent = `atom map :${mapNo}`;
+    node.append(label);
+    node.addEventListener("mouseenter", () => setMapHover(mapNo, true));
+    node.addEventListener("mouseleave", () => setMapHover(mapNo, false));
+  });
+}
+
 const form = el("template-form");
 const reactantInput = el("reactant-input");
 const productInput = el("product-input");
@@ -31,23 +68,27 @@ const generatedGallery = el("generated-gallery");
 const outcomeTableBody = el("outcome-table-body");
 const validationOutput = el("validation-output");
 
-function splitSmilesField(rawValue) {
+function parseMoleculeLines(rawValue) {
   return rawValue
     .split(/\r?\n/)
-    .flatMap((line) => line.split("."))
-    .map((value) => value.trim())
-    .filter(Boolean);
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const match = line.match(/^(\S+)(?:\s+(.+))?$/);
+      if (!match) return { value: line, label: null };
+      return { value: match[1], label: match[2] ? match[2].trim() : null };
+    });
 }
 
 function buildRequest() {
   return {
-    reactants: splitSmilesField(reactantInput.value).map((value, index) => ({
-      value,
-      label: `reactant ${index + 1}`
+    reactants: parseMoleculeLines(reactantInput.value).map((entry, index) => ({
+      value: entry.value,
+      label: entry.label ?? `reactant ${index + 1}`
     })),
-    products: splitSmilesField(productInput.value).map((value, index) => ({
-      value,
-      label: `target ${index + 1}`
+    products: parseMoleculeLines(productInput.value).map((entry, index) => ({
+      value: entry.value,
+      label: entry.label ?? `expected product ${index + 1}`
     })),
     reaction_smarts: reactionSmartsInput.value,
     template_name: "browser"
@@ -94,8 +135,10 @@ function moleculeCard(record) {
 
   const body = document.createElement("div");
   body.className = "body";
-  if (record.svg) {
-    body.innerHTML = record.svg;
+  const svg = record.highlightedSvg ?? record.svg;
+  if (svg) {
+    body.innerHTML = svg;
+    wireAtomHover(body, record.atomMapToIdx);
   } else {
     body.textContent = record.formula ?? "unavailable";
   }
@@ -120,10 +163,13 @@ function renderGallery(target, records, emptyLabel) {
 }
 
 function renderDiagram(result) {
+  clearAllMapHover();
   reactionDiagram.replaceChildren();
   const reactants = result.reactants ?? [];
   const targets = result.targets ?? [];
-  const anyHighlight = reactants.some((r) => r.highlightedSvg);
+  const reactantHighlight = reactants.some((r) => r.highlightedSvg);
+  const productHighlight = targets.some((t) => t.highlightedSvg);
+  const anyHighlight = reactantHighlight || productHighlight;
 
   if (!reactants.length && !targets.length) {
     if (result.reactionSvg) {
@@ -146,7 +192,7 @@ function renderDiagram(result) {
 
   targets.forEach((record, index) => {
     if (index > 0) montage.append(makeConnector("+"));
-    montage.append(makeReactionCell(record, record.svg, "product"));
+    montage.append(makeReactionCell(record, record.highlightedSvg ?? record.svg, "product"));
   });
 
   reactionDiagram.append(montage);
@@ -154,8 +200,8 @@ function renderDiagram(result) {
   const legend = document.createElement("p");
   legend.className = "reaction-legend";
   legend.textContent = anyHighlight
-    ? "Highlighted atoms and bonds match the reactant side of the SMARTS template."
-    : "SMARTS template did not bind to any reactant; showing molecules without highlights.";
+    ? "Highlighted atoms and bonds match the SMARTS template. Hover a mapped atom to trace it across the reaction."
+    : "SMARTS template did not bind to any molecule; showing structures without highlights.";
   reactionDiagram.append(legend);
 }
 
@@ -167,6 +213,7 @@ function makeReactionCell(record, svg, role) {
   body.className = "reaction-cell-body";
   if (svg) {
     body.innerHTML = svg;
+    wireAtomHover(body, record.atomMapToIdx);
   } else if (record.error) {
     body.textContent = record.sourceSmiles ? record.sourceSmiles : "(empty)";
     body.classList.add("reaction-cell-body--placeholder");
@@ -226,7 +273,7 @@ function renderResult(result) {
   bestSignature.textContent = result.bestLabel ?? "-";
 
   renderDiagram(result);
-  renderGallery(targetGallery, result.targets, "No target products provided.");
+  renderGallery(targetGallery, result.targets, "No expected products provided.");
   renderGallery(generatedGallery, best?.products ?? [], "No generated products for the best outcome.");
   renderOutcomeTable(result.outcomes, result.bestOutcomeIndex);
 }
@@ -240,7 +287,7 @@ function resetResultView() {
   bestSignature.textContent = "-";
   reactionDiagram.replaceChildren();
   reactionWarnings.replaceChildren();
-  renderGallery(targetGallery, [], "No target products provided.");
+  renderGallery(targetGallery, [], "No expected products provided.");
   renderGallery(generatedGallery, [], "No generated products for the best outcome.");
   renderOutcomeTable([], null);
 }
@@ -272,7 +319,7 @@ async function runPreview() {
     renderDiagram(preview);
     reactantFormula.textContent = preview.reactantFormula ?? "-";
     targetFormula.textContent = preview.targetFormula ?? "-";
-    renderGallery(targetGallery, preview.targets ?? [], "No target products provided.");
+    renderGallery(targetGallery, preview.targets ?? [], "No expected products provided.");
     markRunStale();
   } catch (_error) {
     // Ignore preview errors while the user is mid-typing.
@@ -284,13 +331,13 @@ function markRunStale() {
   runIsStale = true;
   reactionVerdict.textContent = "preview";
   reactionVerdict.dataset.state = "stale";
-  reactionSummary.textContent = "Live preview - click Run template to score outcomes.";
+  reactionSummary.textContent = "Live preview - click Evaluate reaction to score outcomes.";
   reactionWarnings.replaceChildren();
   outcomeCount.textContent = "-";
   matchScore.textContent = "-";
   generatedFormula.textContent = "-";
   bestSignature.textContent = "-";
-  renderGallery(generatedGallery, [], "Click Run template to generate outcomes.");
+  renderGallery(generatedGallery, [], "Click Evaluate reaction to generate outcomes.");
   renderOutcomeTable([], null);
 }
 
@@ -301,6 +348,14 @@ function clearRunStale() {
 async function submitRequest(event) {
   event?.preventDefault();
 
+  // A debounced preview scheduled just before the user hit Evaluate would
+  // otherwise fire after the async evaluation completes and blow the results
+  // away by re-marking the run as stale.
+  if (previewTimer) {
+    clearTimeout(previewTimer);
+    previewTimer = null;
+  }
+
   const request = buildRequest();
   const validation = validate_template_request(request);
   renderValidation(validation);
@@ -309,22 +364,22 @@ async function submitRequest(event) {
     bridgeStatus.textContent = "validation failed";
     reactionVerdict.textContent = "invalid input";
     reactionVerdict.dataset.state = "error";
-    reactionSummary.textContent = "Fix the validation errors before running the template.";
+    reactionSummary.textContent = "Fix the validation errors before evaluating the reaction.";
     resetResultView();
     return;
   }
 
   try {
-    bridgeStatus.textContent = "running template";
+    bridgeStatus.textContent = "evaluating";
     const result = await run_rdkit_bridge(request, rdkitTemplateAdapterBrowser);
     renderResult(result);
     clearRunStale();
-    bridgeStatus.textContent = "template complete";
+    bridgeStatus.textContent = "evaluation complete";
   } catch (error) {
     reactionSummary.textContent = String(error);
-    reactionVerdict.textContent = "execution failed";
+    reactionVerdict.textContent = "evaluation failed";
     reactionVerdict.dataset.state = "error";
-    bridgeStatus.textContent = "execution failed";
+    bridgeStatus.textContent = "evaluation failed";
     resetResultView();
   }
 }

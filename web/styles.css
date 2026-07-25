@@ -273,6 +273,20 @@ button:hover { filter: brightness(1.05); }
   text-align: center;
 }
 
+/* Cross-diagram atom-map hover: an ellipse tagged with data-smarts-map is a
+   hover target; when hovered, every other ellipse sharing the same map number
+   also lights up. */
+ellipse[data-smarts-map] {
+  cursor: pointer;
+}
+
+ellipse[data-smarts-map].is-map-hover {
+  fill: #ff2e63 !important;
+  stroke: #ff2e63 !important;
+  fill-opacity: 0.75 !important;
+  stroke-opacity: 1 !important;
+}
+
 .facts {
   margin: 0;
   display: grid;

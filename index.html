@@ -3,19 +3,19 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>smartslop</title>
+    <title>SMARTSLOP - SMARTS Linter and Outcome Predictor</title>
     <link data-trunk rel="copy-dir" href="js" />
     <link data-trunk rel="copy-dir" href="web" />
     <link data-trunk rel="copy-dir" href="vendor" />
     <link data-trunk rel="copy-dir" href="pkg-web" />
-    <link rel="stylesheet" href="./web/styles.css?v=20260725e" />
+    <link rel="stylesheet" href="./web/styles.css?v=20260725h" />
   </head>
   <body>
     <main class="app">
       <header class="app-header">
-        <h1>smartslop &mdash; reaction template evaluator</h1>
+        <h1>SMARTSLOP &mdash; SMARTS Linter and Outcome Predictor</h1>
         <p class="status-line">
-          bridge: <span id="bridge-status">booting</span> &middot;
+          engine: <span id="bridge-status">booting</span> &middot;
           rdkit: <span id="rdkit-status">loading</span>
         </p>
       </header>
@@ -24,22 +24,22 @@
         <aside class="sidebar">
           <form id="template-form">
             <label>
-              <span>Reactant SMILES</span>
-              <small>One per line or dot-separated.</small>
-              <textarea id="reactant-input" rows="4">CCBr
-O</textarea>
+              <span>Reactants</span>
+              <small>One per line. Optional name after a space, e.g. <code>CCBr ethyl bromide</code>.</small>
+              <textarea id="reactant-input" rows="4">COC=CC(=C)O[Si](C)(C)C Danishefsky's diene
+O=C1C=CC(=O)C=C1 p-benzoquinone</textarea>
             </label>
             <label>
-              <span>Target product SMILES</span>
-              <small>Used to score the generated outcomes.</small>
-              <textarea id="product-input" rows="3">CCO</textarea>
+              <span>Expected products</span>
+              <small>One per line. Optional name after a space. Used to score the generated outcomes.</small>
+              <textarea id="product-input" rows="3">COC1C=C(O[Si](C)(C)C)CC2C(=O)C=CC(=O)C12 Diels-Alder adduct</textarea>
             </label>
             <label>
               <span>Reaction SMARTS</span>
               <small>Atom-mapped templates give the most reliable results.</small>
-              <textarea id="reaction-smarts-input" rows="4">[CH3:1][CH2:2][Br:3].[OH2:4]>>[CH3:1][CH2:2][OH:4]</textarea>
+              <textarea id="reaction-smarts-input" rows="4">[C:1]=[C:2][C:3]=[C:4].[C:5]=[C:6]>>[C:1]1[C:2]=[C:3][C:4][C:5][C:6]1</textarea>
             </label>
-            <button type="submit">Run template</button>
+            <button type="submit">Evaluate reaction</button>
           </form>
 
           <section class="validation">
@@ -51,10 +51,10 @@ O</textarea>
         <section class="workspace">
           <section class="card">
             <div class="card-head">
-              <h2>Reaction template</h2>
-              <span id="reaction-verdict" class="verdict" data-state="pending">Pending</span>
+              <h2>Reaction overview</h2>
+              <span id="reaction-verdict" class="verdict" data-state="pending">not evaluated</span>
             </div>
-            <p id="reaction-summary" class="summary">Waiting for RDKit analysis...</p>
+            <p id="reaction-summary" class="summary">Enter reactants, expected products, and a SMARTS template, then click Evaluate reaction.</p>
             <div id="reaction-warnings" class="messages"></div>
             <div id="reaction-diagram" class="reaction-canvas"></div>
             <dl class="facts">
@@ -62,18 +62,18 @@ O</textarea>
               <div><dt>Best match</dt><dd id="match-score">-</dd></div>
               <div><dt>Best outcome</dt><dd id="best-signature">-</dd></div>
               <div><dt>Reactant formula</dt><dd id="reactant-formula">-</dd></div>
-              <div><dt>Target formula</dt><dd id="target-formula">-</dd></div>
-              <div><dt>Generated formula</dt><dd id="generated-formula">-</dd></div>
+              <div><dt>Expected product formula</dt><dd id="target-formula">-</dd></div>
+              <div><dt>Generated product formula</dt><dd id="generated-formula">-</dd></div>
             </dl>
           </section>
 
           <section class="card">
             <div class="card-head">
-              <h2>Product bench</h2>
+              <h2>Product comparison</h2>
             </div>
             <div class="compare">
               <div>
-                <h3>Target products</h3>
+                <h3>Expected products</h3>
                 <div id="target-gallery" class="molecule-strip"></div>
               </div>
               <div>
@@ -85,7 +85,7 @@ O</textarea>
 
           <section class="card">
             <div class="card-head">
-              <h2>Enumerated outcomes</h2>
+              <h2>Predicted outcomes</h2>
             </div>
             <table class="outcomes">
               <thead>

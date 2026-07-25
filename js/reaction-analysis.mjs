@@ -134,7 +134,7 @@ function renderHighlightedSvg(mol, match) {
   return mol.get_svg_with_highlights(JSON.stringify(details));
 }
 
-function highlightReactant(RDKitModule, sourceSmiles, qmol) {
+function highlightMolecule(RDKitModule, sourceSmiles, qmol) {
   const mol = RDKitModule.get_mol(sourceSmiles);
   if (!mol) return null;
   try {
@@ -146,7 +146,52 @@ function highlightReactant(RDKitModule, sourceSmiles, qmol) {
   }
 }
 
-function assignReactantHighlights(RDKitModule, reactants, smartsFragments) {
+// Walks a SMARTS fragment and returns the atom-map number (or null) for each
+// atom in the order the atoms appear textually. RDKit assigns query-atom
+// indices in that same order, which lets us bridge a substructure match's
+// atom list back to the SMARTS atom-map namespace.
+function collectSmartsAtomMaps(smarts) {
+  const maps = [];
+  let i = 0;
+  const n = smarts.length;
+  while (i < n) {
+    const c = smarts[i];
+    if (c === "[") {
+      let end = i + 1;
+      while (end < n && smarts[end] !== "]") end += 1;
+      const inside = smarts.slice(i + 1, end);
+      const m = inside.match(/:(\d+)(?!\d)/);
+      maps.push(m ? Number(m[1]) : null);
+      i = end + 1;
+    } else if ((c >= "A" && c <= "Z") || (c >= "a" && c <= "z") || c === "*") {
+      const two = smarts.substr(i, 2);
+      if (two === "Cl" || two === "Br") i += 2;
+      else i += 1;
+      maps.push(null);
+    } else {
+      i += 1;
+    }
+  }
+  return maps;
+}
+
+function buildAtomMapToIdx(smartsFragment, matchAtomIndices) {
+  const queryMaps = collectSmartsAtomMaps(smartsFragment);
+  const result = {};
+  const upto = Math.min(queryMaps.length, matchAtomIndices.length);
+  for (let queryIdx = 0; queryIdx < upto; queryIdx += 1) {
+    const mapNo = queryMaps[queryIdx];
+    if (mapNo == null) continue;
+    // First writer wins if the SMARTS has duplicate map numbers (unusual).
+    if (!(mapNo in result)) result[mapNo] = matchAtomIndices[queryIdx];
+  }
+  return result;
+}
+
+// Greedy pairing: for each molecule, claim the first unclaimed SMARTS fragment
+// that substructure-matches it. Works symmetrically for reactant/LHS and
+// product/RHS sides.
+function assignSideHighlights(RDKitModule, molecules, smartsFragments) {
   const qmols = smartsFragments.map((smarts) => {
     try {
       const qmol = RDKitModule.get_qmol(smarts);
@@ -155,19 +200,22 @@ function assignReactantHighlights(RDKitModule, reactants, smartsFragments) {
       return null;
     }
   });
-  const results = reactants.map(() => null);
+  const results = molecules.map(() => null);
   const claimed = new Set();
   try {
-    for (let i = 0; i < reactants.length; i += 1) {
+    for (let i = 0; i < molecules.length; i += 1) {
+      const sourceSmiles = molecules[i]?.sourceSmiles;
+      if (!sourceSmiles) continue;
       for (let j = 0; j < qmols.length; j += 1) {
         if (!qmols[j] || claimed.has(j)) continue;
-        const highlight = highlightReactant(RDKitModule, reactants[i].sourceSmiles, qmols[j].qmol);
+        const highlight = highlightMolecule(RDKitModule, sourceSmiles, qmols[j].qmol);
         if (highlight) {
           results[i] = {
             smartsFragment: qmols[j].smarts,
             highlightedSvg: highlight.svg,
             matchedAtoms: highlight.match.atoms,
-            matchedBonds: highlight.match.bonds
+            matchedBonds: highlight.match.bonds,
+            atomMapToIdx: buildAtomMapToIdx(qmols[j].smarts, highlight.match.atoms)
           };
           claimed.add(j);
           break;
@@ -178,6 +226,18 @@ function assignReactantHighlights(RDKitModule, reactants, smartsFragments) {
     for (const entry of qmols) entry?.qmol?.delete?.();
   }
   return results;
+}
+
+function applyHighlights(molecules, highlights) {
+  molecules.forEach((record, index) => {
+    const highlight = highlights[index];
+    if (!highlight) return;
+    record.highlightedSvg = highlight.highlightedSvg;
+    record.matchedAtoms = highlight.matchedAtoms;
+    record.matchedBonds = highlight.matchedBonds;
+    record.smartsFragment = highlight.smartsFragment;
+    record.atomMapToIdx = highlight.atomMapToIdx;
+  });
 }
 
 function buildProductLabel(records) {
@@ -209,11 +269,21 @@ function withMol(RDKitModule, smiles, fn) {
 
 function summarizeInputMolecule(RDKitModule, molecule, role, index) {
   const label = molecule.label ?? `${role} ${index + 1}`;
-  const record = withMol(RDKitModule, molecule.value, (mol) =>
-    moleculeRecord(RDKitModule, mol, { index, role, label, sourceSmiles: molecule.value })
+  // Canonicalise first, then re-parse. RDKit's 2D layout follows the atom
+  // traversal order of the parsed SMILES, so two chemically identical inputs
+  // written differently would otherwise render as visually different sketches.
+  // Rebuilding from the canonical string gives a stable, input-independent
+  // depiction and makes sourceSmiles line up with canonicalSmiles for every
+  // downstream consumer (highlighting, hover, gallery cards).
+  const canonical = withMol(RDKitModule, molecule.value, (mol) => mol.get_smiles?.());
+  if (!canonical) {
+    throw new Error(`RDKit rejected ${role}[${index}] "${molecule.value}" as invalid SMILES.`);
+  }
+  const record = withMol(RDKitModule, canonical, (mol) =>
+    moleculeRecord(RDKitModule, mol, { index, role, label, sourceSmiles: canonical })
   );
   if (!record) {
-    throw new Error(`RDKit rejected ${role}[${index}] "${molecule.value}" as invalid SMILES.`);
+    throw new Error(`RDKit rejected the canonical form of ${role}[${index}]: "${canonical}".`);
   }
   return record;
 }
@@ -380,14 +450,26 @@ function balanceWarnings(reactants, targets) {
   const reactantHeavy = aggregateCounts(reactants);
   const targetHeavy = aggregateCounts(targets);
   const diff = diffHeavyCounts(reactantHeavy, targetHeavy);
-  if (Object.keys(diff).length) {
-    const parts = Object.entries(diff)
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([symbol, delta]) => `${symbol}${delta > 0 ? `+${delta}` : delta}`);
-    warnings.push(
-      `Heavy-atom imbalance between reactants and target products: ${parts.join(", ")}. Check whether a byproduct or co-reagent is missing from your inputs.`
-    );
+  const extraOnReactants = [];
+  const extraOnProducts = [];
+  for (const [symbol, delta] of Object.entries(diff)) {
+    if (delta > 0) extraOnReactants.push({ symbol, count: delta });
+    else if (delta < 0) extraOnProducts.push({ symbol, count: -delta });
   }
+  if (!extraOnReactants.length && !extraOnProducts.length) return warnings;
+  const format = (entries) =>
+    entries
+      .sort((a, b) => a.symbol.localeCompare(b.symbol))
+      .map(({ symbol, count }) => `${count}\u00d7${symbol}`)
+      .join(", ");
+  const parts = [];
+  if (extraOnReactants.length) {
+    parts.push(`${format(extraOnReactants)} on the reactant side with no matching product atom (missing byproducts?)`);
+  }
+  if (extraOnProducts.length) {
+    parts.push(`${format(extraOnProducts)} on the product side with no matching reactant atom (missing co-reagents?)`);
+  }
+  warnings.push(`Heavy-atom imbalance - ${parts.join("; ")}.`);
   return warnings;
 }
 
@@ -414,16 +496,22 @@ export function analyzeReactionRequest(RDKitModule, request) {
     reaction.delete?.();
   }
 
-  const { reactants: reactantSmartsFragments } = splitReactionSmarts(reactionSmarts);
-  const reactantHighlights = assignReactantHighlights(RDKitModule, reactants, reactantSmartsFragments);
-  reactants.forEach((record, index) => {
-    const highlight = reactantHighlights[index];
-    if (!highlight) return;
-    record.highlightedSvg = highlight.highlightedSvg;
-    record.matchedAtoms = highlight.matchedAtoms;
-    record.matchedBonds = highlight.matchedBonds;
-    record.smartsFragment = highlight.smartsFragment;
-  });
+  const { reactants: reactantSmartsFragments, products: productSmartsFragments } =
+    splitReactionSmarts(reactionSmarts);
+  applyHighlights(
+    reactants,
+    assignSideHighlights(RDKitModule, reactants, reactantSmartsFragments)
+  );
+  applyHighlights(
+    targets,
+    assignSideHighlights(RDKitModule, targets, productSmartsFragments)
+  );
+  for (const outcome of outcomes) {
+    applyHighlights(
+      outcome.products,
+      assignSideHighlights(RDKitModule, outcome.products, productSmartsFragments)
+    );
+  }
 
   const targetLabel = buildProductLabel(targets);
   const enrichedOutcomes = outcomes.map((outcome) => ({
@@ -490,22 +578,25 @@ export function previewReactionRequest(RDKitModule, request) {
 
   let smartsError = null;
   const validReactants = reactants.filter((r) => !r.error);
+  const validTargets = targets.filter((t) => !t.error);
   if (reactionSmarts) {
-    const { reactants: fragments } = splitReactionSmarts(reactionSmarts);
-    if (fragments.length) {
-      try {
-        const highlights = assignReactantHighlights(RDKitModule, validReactants, fragments);
-        validReactants.forEach((record, idx) => {
-          const highlight = highlights[idx];
-          if (!highlight) return;
-          record.highlightedSvg = highlight.highlightedSvg;
-          record.matchedAtoms = highlight.matchedAtoms;
-          record.matchedBonds = highlight.matchedBonds;
-          record.smartsFragment = highlight.smartsFragment;
-        });
-      } catch (error) {
-        smartsError = String(error?.message ?? error);
+    const { reactants: reactantFragments, products: productFragments } =
+      splitReactionSmarts(reactionSmarts);
+    try {
+      if (reactantFragments.length) {
+        applyHighlights(
+          validReactants,
+          assignSideHighlights(RDKitModule, validReactants, reactantFragments)
+        );
       }
+      if (productFragments.length) {
+        applyHighlights(
+          validTargets,
+          assignSideHighlights(RDKitModule, validTargets, productFragments)
+        );
+      }
+    } catch (error) {
+      smartsError = String(error?.message ?? error);
     }
   }
 
