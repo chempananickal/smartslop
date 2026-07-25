@@ -1,0 +1,13 @@
+{
+  "name": "smartslop",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:web": "trunk build",
+    "dev": "trunk serve",
+    "verify:rdkit-bridge": "node ./scripts/verify-rdkit-bridge.mjs"
+  },
+  "dependencies": {
+    "@rdkit/rdkit": "2025.3.1-1.0.0"
+  }
+}

@@ -1,0 +1,9 @@
+[build]
+target = "index.html"
+dist = "dist"
+filehash = false
+
+[[hooks]]
+stage = "pre_build"
+command = "bash"
+command_arguments = ["scripts/prepare-web.sh"]
