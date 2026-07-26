@@ -64,6 +64,16 @@ const targetGallery = el("target-gallery");
 const generatedGallery = el("generated-gallery");
 const outcomeTableBody = el("outcome-table-body");
 const validationOutput = el("validation-output");
+const clearBtn = el("clear-btn");
+
+clearBtn.addEventListener("click", () => {
+  reactantInput.value = "";
+  productInput.value = "";
+  reactionSmartsInput.value = "";
+  validationOutput.replaceChildren();
+  validationOutput.textContent = "Waiting for input...";
+  resetResultView();
+});
 
 function parseMoleculeLines(rawValue) {
   return rawValue
@@ -276,6 +286,9 @@ function renderResult(result) {
 }
 
 function resetResultView() {
+  reactionSummary.textContent = "Enter reactants, expected products, and a SMARTS template, then click Evaluate reaction.";
+  reactionVerdict.textContent = "not evaluated";
+  reactionVerdict.dataset.state = "pending";
   outcomeCount.textContent = "-";
   matchScore.textContent = "-";
   reactantFormula.textContent = "-";
@@ -283,6 +296,7 @@ function resetResultView() {
   generatedFormula.textContent = "-";
   bestSignature.textContent = "-";
   reactionDiagram.replaceChildren();
+  reactionDiagram.append(message("Fill in the fields on the left and click \u201cEvaluate reaction\u201d to see results here.", "info"));
   reactionWarnings.replaceChildren();
   renderGallery(targetGallery, [], "No expected products provided.");
   renderGallery(generatedGallery, [], "No generated products for the best outcome.");

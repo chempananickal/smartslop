@@ -43,7 +43,10 @@ O=C1C=CC(=O)C=C1 p-benzoquinone</textarea>
               <small>Atom-mapped templates give the most reliable results.</small>
               <textarea id="reaction-smarts-input" rows="4">[C:1]=[C:2][C:3]=[C:4].[C:5]=[C:6]>>[C:1]1[C:2]=[C:3][C:4][C:5][C:6]1</textarea>
             </label>
-            <button type="submit">Evaluate reaction</button>
+            <div class="form-actions">
+              <button type="submit">Evaluate reaction</button>
+              <button type="button" id="clear-btn">Clear all</button>
+            </div>
           </form>
 
           <section class="validation">
@@ -105,6 +108,66 @@ O=C1C=CC(=O)C=C1 p-benzoquinone</textarea>
           </section>
         </section>
       </div>
+      <section class="app-info">
+        <section class="card">
+          <div class="card-head"><h2>FAQ</h2></div>
+          <dl class="faq">
+            <div>
+              <dt>Are you affiliated with the RDKit or RDKit.js projects?</dt>
+              <dd><strong>No.</strong> In fact, this app runs on some undocumented features within RDKit.js. So any mistakes or undesired behavior are likely my fault and not the fault of the RDKit or RDKit.js.</dd>
+            </div>
+            <div>
+              <dt>What is SMARTS?</dt>
+              <dd>SMARTS (SMILES ARbitrary Target Specification) is a language for describing molecular patterns. Think of it as regex for SMILES strings.</dd>
+            </div>
+            <div>
+              <dt>What is a reaction SMARTS?</dt>
+              <dd>A  reaction template describing which atoms participate in a reaction and how bonds change. Atom-map numbers (e.g. <code>[C:1]</code>) link reactant atoms to product atoms.</dd>
+            </div>
+            <div>
+              <dt>Why does my template produce no outcomes?</dt>
+              <dd>Check that the SMARTS pattern matches the reactants you have entered. The validation panel on the left will highlight syntax errors. Atom-mapping mismatches are a common cause of empty results.</dd>
+            </div>
+            <div>
+              <dt>What does the score mean?</dt>
+              <dd>The score is a Tanimoto similarity between the Morgan fingerprints (ECFP4) of the best generated outcome and the expected products. A score of 1.0 is an exact match.</dd>
+            </div>
+            <div>
+              <dt>Is my data sent anywhere?</dt>
+              <dd>No. All computation runs <strong>locally</strong> in your browser via RDKit.js (WebAssembly). Nothing is transmitted to a server.</dd>
+            </div>
+            <div>
+              <dt>Can the app remember my inputs?</dt>
+              <dd>The app is completely ephemeral by design. Refreshing the tab will clear all your inputs. But I don't know enough about browsers to tell you whether something would be cached on your device.</dd>
+            </div>
+            <div>
+              <dt>Can I use this for commercial purposes?</dt>
+              <dd>Of course! The code is licensed under the Apache License 2.0. Just don't hold me or the RDKit/RDKit.js developers liable for any issues.</dd>
+            </div>
+            <div>
+              <dt>What is your privacy policy?</dt>
+              <dd>I do not collect <strong>any</strong> personal data. I don't even use any cookies (I come from a long line of diabetics. A cookie is the last thing I need haha).</dd>
+            </div>
+            <div>
+              <dt>Where is the source code?</dt>
+              <dd>The source code is available on <a href="https://github.com/chempananickal/smartslop" target="_blank" rel="noopener noreferrer">GitHub</a>.</dd>
+            </div>
+            <div>
+              <dt>I found a bug / I have a feature request. How can I get in touch?</dt>
+              <dd>Feel free to open an <a href="https://github.com/chempananickal/smartslop/issues" target="_blank" rel="noopener noreferrer">issue</a>. This is just a small hobby project, so I can't promise I'll get around to it, but I'll try.</dd>
+            </div>
+          </dl>
+        </section>
+
+        <section class="card">
+          <div class="card-head"><h2>Credits</h2></div>
+          <ul class="credits-list">
+            <li><a href="https://www.rdkit.org/" target="_blank" rel="noopener noreferrer">RDKit</a> &mdash; Open-source cheminformatics library by Greg Landrum and contributors.</li>
+            <li><a href="https://www.rdkitjs.com/" target="_blank" rel="noopener noreferrer">RDKit.js</a> &mdash; WebAssembly build of the RDKit for the browser.</li>
+          </ul>
+        </section>
+      </section>
+
       <footer class="app-footer">
         <p>A hobby project by R C James (<a href="https://github.com/chempananickal" target="_blank" rel="noopener noreferrer">chempananickal</a>). Provided as-is without any warranty, explicit or implicit.</p>
       </footer>
